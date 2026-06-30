@@ -86,7 +86,7 @@ function App() {
 
             </div>
             
-            {/* Right Column: Stats & Alerts */}
+            {/* Right Column: Stats & Alerts & AI Assistant */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
               <section className="panel">
                 <div className="panel-header"><h2 className="panel-title">Metrics</h2></div>
@@ -99,21 +99,17 @@ function App() {
               </section>
 
               <section className="panel" style={{ flexGrow: 1 }}>
-                <div className="panel-header"><h2 className="panel-title">Recent Alerts</h2></div>
-                <div className="alert-list">
-                  {alerts.map(alert => (
-                    <div key={alert.id} className="alert-item">
-                      <div className="alert-info">
-                        <div className={`alert-title ${alert.severity}`}>
-                          {alert.severity === 'high' && <div style={{width: 6, height: 6, borderRadius: '50%', background: '#EF4444'}}></div>}
-                          {alert.severity === 'med' && <div style={{width: 6, height: 6, borderRadius: '50%', background: '#F59E0B'}}></div>}
-                          {alert.title}
-                        </div>
-                        <div className="alert-loc">{alert.loc}</div>
-                      </div>
-                      <div className="alert-time">{alert.time}</div>
-                    </div>
-                  ))}
+                <div className="panel-header"><h2 className="panel-title">AI Assistant Log</h2></div>
+                <div className="alert-list" style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-med)' }}>
+                  <div style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '4px', borderLeft: '2px solid var(--text-high)' }}>
+                    [15:42:10] Llama-3-Agent: "I am tracking one person at the Front Desk (CAM-01). No suspicious behavior detected."
+                  </div>
+                  <div style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '4px', borderLeft: '2px solid var(--alert)', color: '#FFF' }}>
+                    [15:40:05] Llama-3-Agent: "WARNING: YOLO detected an altercation on CAM-04. I am drafting a dispatch report for the authorities."
+                  </div>
+                  <div style={{ padding: '0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '4px', borderLeft: '2px solid var(--text-high)' }}>
+                    [15:35:12] Llama-3-Agent: "System online. YOLO vision model running at 60FPS. Awaiting detections."
+                  </div>
                 </div>
               </section>
             </div>
