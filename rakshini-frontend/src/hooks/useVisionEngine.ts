@@ -358,7 +358,7 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
         const p1 = persons[0];
         const p2 = persons[1];
         payload.interactions.push({
-          label: 'Hostile Encounter / Aggressive Stance',
+          label: 'Physical Altercation / Fighting',
           confidence: 0.88,
           track_ids: [p1.track_id, p2.track_id]
         });
@@ -378,8 +378,8 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
         crimeType = 'crime';
         crimeConfidence = 0.95;
       } else if (cameraId === 'CAM-04' && payload.interactions.length > 0) {
-        crimeThreat = 'Physical Confrontation / Verbal Dispute';
-        crimeType = 'disturbance';
+        crimeThreat = 'Assault / Violence';
+        crimeType = 'crime';
         crimeConfidence = 0.91;
       }
 
