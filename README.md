@@ -1,46 +1,77 @@
-# Rakshini
+# Rakshini OS
 
-AI-powered security surveillance dashboard. A React frontend runs real-time object detection (YOLOv8 via ONNX Runtime Web, or optionally the Roboflow hosted API) over camera feeds and raises incident alerts; a Rust backend provides a camera registry, a REST API, and a WebSocket pipeline for server-side inference.
+Rakshini OS is an AI-powered security surveillance desktop application built using Electron, React, and a native Rust vision telemetry pipeline. It runs frame-by-frame object tracking and human pose estimations natively or via cloud-hosted Roboflow inference.
 
-## Repository layout
+---
 
+## 🏗️ Repository Architecture
+
+```text
+├── main.js                  # Electron main process (header bypass & LLM spawn)
+├── preload.js               # Electron IPC security bridge
+├── package.json             # Root dependencies & scripts
+├── README.md                # System documentation
+├── rakshini-frontend/       # React 19 + TypeScript + Vite Dashboard
+│   ├── src/                 # Component views, vision hooks, and telemetry stores
+│   └── public/              # static assets (altercation video loops, ONNX model)
+└── rakshini-backend/        # Rust native vision telemetry server (Axum + Ort)
 ```
-rakshini-frontend/   React 19 + TypeScript + Vite dashboard (in-browser AI vision)
-rakshini-backend/    Rust (Axum + Tokio + ort) camera/vision/WebSocket server
-```
 
-## Frontend
+---
 
+## ⚡ Quick Start
+
+### Prerequisites
+*   **Node.js**: v22+
+*   **Rust**: v1.85+ (Edition 2024 compiler)
+
+### Installation
+From the repository root, install dependencies for both the Electron shell and React dashboard:
 ```bash
+# Install root Electron dependencies
+npm install
+
+# Install React frontend dependencies
 cd rakshini-frontend
 npm install
-npm run dev        # http://localhost:5173
-npm run build      # type-checks and produces dist/
-npm run lint       # oxlint
+npm run build
+cd ..
 ```
 
-Features:
-- Live camera grid (local mock feeds, plus Helios / Windy / 511NY providers when API keys are set in Settings)
-- In-browser YOLOv8n inference (onnxruntime-web, WASM) with NMS and a simple Euclidean tracker
-- Optional Roboflow hosted-inference mode (configure API key + model endpoint in Settings)
-- Incident feed, evidence viewer, analytics dashboard, and AI assistant panels
+---
 
-API keys are entered at runtime in **Settings** and are held only in memory — none are committed to the repository.
+## 🚀 Running the Application
 
-## Backend
+To start the complete environment (MediaMTX streaming + Rust telemetry backend + React dev server + Electron client wrapper):
 
-Requires Rust 1.85+ (edition-2024 transitive dependencies).
+### 1. Launch MediaMTX Live Stream Server
+```bash
+cd mediamtx
+./mediamtx
+```
 
+### 2. Launch Rust Native Vision Pipeline
 ```bash
 cd rakshini-backend
-cargo run          # serves on 0.0.0.0:3000
+cargo run
 ```
 
-- `GET  /api/cameras`, `GET /api/cameras/:id`, `POST /api/cameras/search`
-- `GET  /api/cameras/analytics`
-- `POST /api/cameras/:id/stream/start`, `POST /api/cameras/:id/stream/stop`
-- `ws://localhost:3000/ws` — broadcasts frames + detections; answers `ping` heartbeats with `pong`
+### 3. Launch Vite Dev Server & Electron Desktop Container
+From the root folder:
+```bash
+npm start
+```
 
-The vision engine downloads `yolov8n.onnx` on first run and uses `ort` with the `load-dynamic` feature, so an ONNX Runtime shared library must be available at runtime (set `ORT_DYLIB_PATH` to your `libonnxruntime` if it is not on the default search path). If the model or runtime is unavailable the server still runs; inference is simply skipped.
+---
 
-The frontend connects to the backend WebSocket at `ws://localhost:3000/ws` (see `rakshini-frontend/src/App.tsx`). The frontend also works standalone without the backend, using its in-browser vision engine.
+## 📺 Camera Stream Configuration
+
+*   **CAM-01 (Front Desk)**: Mapped to a peaceful St. George Street public webcam livestream. All simulated alerts are disabled to keep scenic cams clean.
+*   **CAM-02 (Times Square, NY)**: Plays a Times Square street fight video loop (`/cam2.mp4`). Runs frame-by-frame local YOLOv8 ONNX client-side model inference.
+*   **CAM-03 (Parking Lot A)**: Plays a Bourbon Street brawl video loop (`/cam3.mp4`), running frame-by-frame local YOLOv8 ONNX client-side model inference.
+*   **CAM-04 (Alleyway)**: Runs your server room altercation video loop (`/vid_cam4.mp4`), running local YOLOv8 ONNX model inference.
+
+---
+
+## 🔒 Iframe Security & Header Bypass
+EarthCam and YouTube livestreams standardly utilize `X-Frame-Options` and `Content-Security-Policy` frames blocking. The Electron wrapper in `main.js` interceptor strips these headers in the request pipeline to allow seamless dashboard embeds.
