@@ -330,45 +330,35 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
 
       // 2. BEHAVIOUR MODEL STAGE (Action & State Recognition)
       const persons = trackedBoxes.filter(b => b.label === 'Person');
-      const detectedVehicles = trackedBoxes.filter(b => b.label === 'Vehicle');
-      const detectedBags = trackedBoxes.filter(b => b.label === 'Bag');
 
       payload.interactions = [];
       payload.vehicles = [];
 
-      if (cameraId === 'CAM-02' && persons.length >= 1 && detectedBags.length >= 1) {
-        // Suspicious proximity behavior (person approaching a bag)
-        const p = persons[0];
-        const b = detectedBags[0];
+      if (cameraId === 'CAM-02' && persons.length >= 2) {
+        const p1 = persons[0];
+        const p2 = persons[1];
         payload.interactions.push({
-          label: 'Suspicious Proximity to Belongings',
+          label: 'Physical Altercation / Fighting',
           confidence: 0.94,
-          track_ids: [p.track_id, b.track_id]
+          track_ids: [p1.track_id, p2.track_id]
         });
       }
 
-      if (cameraId === 'CAM-03' && detectedVehicles.length >= 1) {
-        // High speed vehicle trajectory tracking behavior
-        const v = detectedVehicles[0];
-        payload.vehicles.push({
-          track_id: v.track_id,
-          type: 'Car',
-          speed: 84, // Simulating high-speed tracking
-          is_parked: false
-        });
+      if (cameraId === 'CAM-03' && persons.length >= 2) {
+        const p1 = persons[0];
+        const p2 = persons[1];
         payload.interactions.push({
-          label: 'Erratic Trajectory & High Speed',
+          label: 'Physical Altercation / Brawling',
           confidence: 0.91,
-          track_ids: [v.track_id]
+          track_ids: [p1.track_id, p2.track_id]
         });
       }
 
       if (cameraId === 'CAM-04' && persons.length >= 2) {
-        // Hostile interaction between people
         const p1 = persons[0];
         const p2 = persons[1];
         payload.interactions.push({
-          label: 'Hostile Encounter / Aggression',
+          label: 'Hostile Encounter / Aggressive Stance',
           confidence: 0.88,
           track_ids: [p1.track_id, p2.track_id]
         });
@@ -380,16 +370,16 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
       let crimeConfidence = 0.90;
 
       if (cameraId === 'CAM-02' && payload.interactions.length > 0) {
-        crimeThreat = 'Theft / Pickpocketing';
+        crimeThreat = 'Assault / Violence';
         crimeType = 'crime';
         crimeConfidence = 0.93;
       } else if (cameraId === 'CAM-03' && payload.interactions.length > 0) {
-        crimeThreat = 'Traffic Collision / Crash';
-        crimeType = 'accident';
+        crimeThreat = 'Assault / Violence';
+        crimeType = 'crime';
         crimeConfidence = 0.95;
       } else if (cameraId === 'CAM-04' && payload.interactions.length > 0) {
-        crimeThreat = 'Armed Robbery / Assault';
-        crimeType = 'crime';
+        crimeThreat = 'Physical Confrontation / Verbal Dispute';
+        crimeType = 'disturbance';
         crimeConfidence = 0.91;
       }
 
@@ -603,8 +593,8 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
 
         payload.interactions = [
           {
-            label: 'Theft / Purse Snatching',
-            confidence: 0.87,
+            label: 'Physical Altercation / Brawling',
+            confidence: 0.91,
             track_ids: ['p-301', 'p-302']
           }
         ];
@@ -616,9 +606,9 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
           payload.incidents = [{
             id: `inc-${now}`,
             timestamp: now,
-            threat: 'Theft / Robbery',
+            threat: 'Assault / Violence',
             incident_type: 'crime',
-            confidence: 0.87,
+            confidence: 0.91,
             cameraId,
             status: 'active',
             evidenceIds: [evId]
@@ -626,7 +616,7 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
           useStore.getState().addChatMessage({
             id: now.toString(),
             role: 'assistant',
-            content: `🚨 ALERT: [Crime Model] detected active Theft/Robbery on Bourbon Street (CAM-03). Purse snatching interaction trigger matched on Person #p-301 and #p-302. Review live balcony logs.`,
+            content: `🚨 ALERT: [Crime Model] detected active Assault/Violence on Bourbon Street (CAM-03). Brawling interaction trigger matched on Person #p-301 and #p-302. Review live balcony logs.`,
             timestamp: now
           });
         }
