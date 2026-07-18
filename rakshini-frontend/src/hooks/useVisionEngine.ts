@@ -12,7 +12,6 @@ interface BoundingBox {
   height: number;
   label: string;
   confidence: number;
-  track_id?: string;
 }
 
 export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTMLImageElement | null>, cameraId: string) {
@@ -23,6 +22,10 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
   const lastTimeRef = useRef<number>(0);
   const trackerRef = useRef<Map<string, { x: number, y: number, id: string }>>(new Map());
   const lastAlertRef = useRef<Record<string, number>>({});
+
+  const roboflowApiKey = useStore(state => state.roboflowApiKey);
+  const roboflowModelEndpoint = useStore(state => state.roboflowModelEndpoint);
+  const visionEngineMode = useStore(state => state.visionEngineMode);
 
   // Initialize ONNX Session
   useEffect(() => {
@@ -41,10 +44,24 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
 
       } catch (err) {
         console.error("Failed to load YOLOv8 ONNX model:", err);
+        if (useStore.getState().visionEngineMode === 'roboflow') {
+          setIsReady(true);
+          useStore.getState().setWsStatus(true);
+          useStore.getState().updateCamera(cameraId, { status: "online", lastPing: Date.now() });
+        }
       }
     }
     loadModel();
-  }, []);
+  }, [cameraId]);
+
+  // Sync ready status if Roboflow mode is toggled
+  useEffect(() => {
+    if (visionEngineMode === 'roboflow' && roboflowApiKey && roboflowModelEndpoint) {
+      setIsReady(true);
+      useStore.getState().setWsStatus(true);
+      useStore.getState().updateCamera(cameraId, { status: "online", lastPing: Date.now() });
+    }
+  }, [visionEngineMode, roboflowApiKey, roboflowModelEndpoint, cameraId]);
 
   // Set up hidden canvas for resizing frames
   useEffect(() => {
@@ -89,12 +106,8 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
   };
 
   const processFrame = useCallback(async () => {
-    const useRoboflowCloud = useStore.getState().useRoboflowCloud;
-    const roboflowApiKey = useStore.getState().roboflowApiKey;
-    const roboflowModelUrl = useStore.getState().roboflowModelUrl || 'wpns/weapons-s4k8n/1';
-
-    const needsLocal = !useRoboflowCloud || !roboflowApiKey;
-    if (needsLocal && (!isReady || !sessionRef.current)) return;
+    const isRoboflowMode = visionEngineMode === 'roboflow' && roboflowApiKey && roboflowModelEndpoint;
+    if (!isReady && !isRoboflowMode) return;
     if (!videoRef.current || !canvasRef.current) return;
 
     const source = videoRef.current;
@@ -110,89 +123,83 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
     // Draw the source to the 640x640 canvas
     try {
       ctx.drawImage(source, 0, 0, 640, 640);
-    } catch (err) {
+    } catch {
       return;
     }
 
-    const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
-    const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
-    const scaleX = sourceWidth / 640;
-    const scaleY = sourceHeight / 640;
-
     let finalBoxes: BoundingBox[] = [];
 
-    try {
-      if (useRoboflowCloud && roboflowApiKey) {
-        const base64Data = canvasRef.current.toDataURL('image/jpeg', 0.8).split(',')[1];
-        const response = await fetch(`https://detect.roboflow.com/${roboflowModelUrl}?api_key=${roboflowApiKey}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: base64Data
+    if (isRoboflowMode) {
+      try {
+        const dataUrl = canvasRef.current.toDataURL('image/jpeg', 0.8);
+        const base64Data = dataUrl.split(',')[1];
+
+        // Format according to Roboflow developer API specs
+        const res = await fetch(
+          `https://detect.roboflow.com/${roboflowModelEndpoint}?api_key=${roboflowApiKey}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: base64Data
+          }
+        );
+
+        if (!res.ok) throw new Error(`Roboflow returned ${res.status}`);
+
+        const data = await res.json();
+        const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+        const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+        
+        // Roboflow coordinates are scaled relative to the sent frame resolution (640x640)
+        const scaleX = sourceWidth / 640;
+        const scaleY = sourceHeight / 640;
+
+        finalBoxes = (data.predictions || []).map((pred: any) => {
+          const x = (pred.x - pred.width / 2) * scaleX;
+          const y = (pred.y - pred.height / 2) * scaleY;
+          let label = pred.class || "Object";
+          label = label.charAt(0).toUpperCase() + label.slice(1);
+
+          return {
+            x, y,
+            width: pred.width * scaleX,
+            height: pred.height * scaleY,
+            label,
+            confidence: pred.confidence
+          };
         });
-        const result = await response.json();
-        const predictions = result.predictions || [];
+      } catch (err) {
+        console.error("Roboflow API call failed:", err);
+        return;
+      }
+    } else {
+      if (!sessionRef.current) return;
+      const imageData = ctx.getImageData(0, 0, 640, 640);
+      const pixels = imageData.data;
 
-        if (predictions && predictions.length > 0) {
-          const roboflowBoxes: BoundingBox[] = predictions.map((p: any) => {
-            const cx = p.x;
-            const cy = p.y;
-            const w = p.width;
-            const h = p.height;
-            
-            const x = (cx - w / 2) * scaleX;
-            const y = (cy - h / 2) * scaleY;
+      // Convert RGBA to RGB [1, 3, 640, 640] float32 tensor
+      const red = new Float32Array(640 * 640);
+      const green = new Float32Array(640 * 640);
+      const blue = new Float32Array(640 * 640);
 
-            let label = p.class || p.label || "Object";
-            const labelLower = label.toLowerCase();
-            if (['weapon', 'gun', 'pistol', 'knife', 'dagger', 'sword', 'baseball bat'].some(wWord => labelLower.includes(wWord))) {
-              label = "Weapon";
-            } else if (labelLower === 'person') {
-              label = "Person";
-            } else if (['car', 'truck', 'bus', 'vehicle', 'motorcycle'].some(vWord => labelLower.includes(vWord))) {
-              label = "Vehicle";
-            } else if (['backpack', 'bag', 'suitcase', 'handbag', 'umbrella'].some(bWord => labelLower.includes(bWord))) {
-              label = "Bag";
-            } else if (['bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe'].some(aWord => labelLower.includes(aWord))) {
-              label = label.charAt(0).toUpperCase() + label.slice(1);
-            }
-            
-            return {
-              x, y,
-              width: w * scaleX,
-              height: h * scaleY,
-              label,
-              confidence: p.confidence || 0.90
-            };
-          });
-          
-          finalBoxes = nonMaxSuppression(roboflowBoxes, 0.45);
-        }
-      } else {
-        const imageData = ctx.getImageData(0, 0, 640, 640);
-        const pixels = imageData.data;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const pixelIndex = i / 4;
+        red[pixelIndex] = pixels[i] / 255.0;
+        green[pixelIndex] = pixels[i + 1] / 255.0;
+        blue[pixelIndex] = pixels[i + 2] / 255.0;
+      }
 
-        // Convert RGBA to RGB [1, 3, 640, 640] float32 tensor
-        const red = new Float32Array(640 * 640);
-        const green = new Float32Array(640 * 640);
-        const blue = new Float32Array(640 * 640);
+      const tensorData = new Float32Array(3 * 640 * 640);
+      tensorData.set(red, 0);
+      tensorData.set(green, 640 * 640);
+      tensorData.set(blue, 2 * 640 * 640);
 
-        for (let i = 0; i < pixels.length; i += 4) {
-          const pixelIndex = i / 4;
-          red[pixelIndex] = pixels[i] / 255.0;
-          green[pixelIndex] = pixels[i + 1] / 255.0;
-          blue[pixelIndex] = pixels[i + 2] / 255.0;
-        }
+      const tensor = new ort.Tensor('float32', tensorData, [1, 3, 640, 640]);
 
-        const tensorData = new Float32Array(3 * 640 * 640);
-        tensorData.set(red, 0);
-        tensorData.set(green, 640 * 640);
-        tensorData.set(blue, 2 * 640 * 640);
-
-        const tensor = new ort.Tensor('float32', tensorData, [1, 3, 640, 640]);
-
-        const results = await sessionRef.current!.run({ images: tensor });
+      try {
+        const results = await sessionRef.current.run({ images: tensor });
         const output = results.output0; // YOLOv8 standard output name
         const data = output.data as Float32Array;
         const anchors = output.dims[2]; // Should be [1, 84, 8400]
@@ -200,11 +207,17 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
         const boxes: BoundingBox[] = [];
         const confidenceThreshold = 0.5;
 
+        const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+        const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+        const scaleX = sourceWidth / 640;
+        const scaleY = sourceHeight / 640;
+
         // Extract boxes
         for (let index = 0; index < anchors; index++) {
           let maxClassProb = 0;
           let classId = -1;
 
+          // YOLOv8 has 80 classes, starting from index 4
           for (let col = 0; col < 80; col++) {
             const prob = data[(4 + col) * anchors + index];
             if (prob > maxClassProb) {
@@ -214,7 +227,7 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
           }
 
           if (maxClassProb > confidenceThreshold) {
-            const cx = data[0 * anchors + index];
+            const cx = data[index]; // row 0: center x
             const cy = data[1 * anchors + index];
             const w = data[2 * anchors + index];
             const h = data[3 * anchors + index];
@@ -230,6 +243,7 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
             else if (classId === 34 || classId === 43) label = "Weapon";
             else if ([24, 26, 28].includes(classId)) label = "Bag";
 
+            // Calculate box coordinates
             const x = (cx - w / 2) * scaleX;
             const y = (cy - h / 2) * scaleY;
 
@@ -243,63 +257,50 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
           }
         }
 
+        // Apply NMS to remove overlapping boxes
         finalBoxes = nonMaxSuppression(boxes, 0.45);
-      }
-
-    // Trigger threat alerts for weapons
-    const weaponBox = finalBoxes.find(b => b.label === "Weapon");
-    if (weaponBox) {
-      const hasWeaponIncident = useStore.getState().incidents.some(
-        inc => inc.cameraId === cameraId && inc.threat.includes("Weapon") && inc.status === "active"
-      );
-      if (!hasWeaponIncident) {
-        useStore.getState().addIncident({
-          id: `inc-${Date.now()}`,
-          cameraId,
-          threat: `Weapon Detected: ${weaponBox.label} (Cloud AI)`,
-          incident_type: "crime",
-          confidence: weaponBox.confidence,
-          status: "active",
-          timestamp: Date.now()
-        });
+      } catch (err) {
+        console.error("ONNX inference execution failed:", err);
+        return;
       }
     }
-      
+    
+    try {
       // 1. OBJECTS & TRACKER STAGE (Euclidean Tracker)
       const currentTracks = new Map();
-      const trackedBoxes = finalBoxes.map(b => {
-        let bestId = "";
-        let minDistance = 120; // Distance threshold to match same object
-        
-        // Find closest match from previous frame
-        for (const [prevKey, prevVal] of trackerRef.current.entries()) {
-          const [prevLabel, prevId] = prevKey.split('_');
-          if (prevLabel === b.label) {
-            const dist = Math.hypot(b.x - prevVal.x, b.y - prevVal.y);
-            if (dist < minDistance) {
-              minDistance = dist;
-              bestId = prevId;
-            }
+    const trackedBoxes = finalBoxes.map(b => {
+      let bestId = "";
+      let minDistance = 120; // Distance threshold to match same object
+      
+      // Find closest match from previous frame
+      for (const [prevKey, prevVal] of trackerRef.current.entries()) {
+        const [prevLabel, prevId] = prevKey.split('_');
+        if (prevLabel === b.label) {
+          const dist = Math.hypot(b.x - prevVal.x, b.y - prevVal.y);
+          if (dist < minDistance) {
+            minDistance = dist;
+            bestId = prevId;
           }
         }
-        
-        if (!bestId) {
-          bestId = Math.random().toString(36).substring(7);
-        }
-        
-        const trackKey = `${b.label}_${bestId}`;
-        currentTracks.set(trackKey, { x: b.x, y: b.y, id: bestId });
-        
-        return {
-          ...b,
-          track_id: bestId
-        };
-      });
-      
-      trackerRef.current = currentTracks;
-      setDetections(trackedBoxes);
+      }
 
-      // Report Telemetry to Global Store
+      if (!bestId) {
+        bestId = Math.random().toString(36).substring(7);
+      }
+
+      const trackKey = `${b.label}_${bestId}`;
+      currentTracks.set(trackKey, { x: b.x, y: b.y, id: bestId });
+
+      return {
+        ...b,
+        track_id: bestId
+      };
+    });
+
+    trackerRef.current = currentTracks;
+    setDetections(trackedBoxes);
+
+    // Report Telemetry to Global Store
       const inferenceEnd = performance.now();
       const latencyMs = Math.round(inferenceEnd - inferenceStart);
       
@@ -438,7 +439,7 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
       console.error("Error during inference:", err);
     }
 
-  }, [isReady, videoRef, cameraId]);
+  }, [isReady, videoRef, cameraId, visionEngineMode, roboflowApiKey, roboflowModelEndpoint]);
 
   // Continuously request animation frames to process
   useEffect(() => {

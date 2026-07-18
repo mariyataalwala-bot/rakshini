@@ -24,7 +24,7 @@ impl RollingBuffer {
         self.buffer.push_back(frame);
     }
     
-    pub fn save_to_disk(&self, event: &VisionEvent) {
+    pub fn save_to_disk(&self, _event: &VisionEvent) {
         println!("Saving {} frames to /incidents/video_{}.mp4", self.buffer.len(), chrono::Utc::now().timestamp());
         // In real app, encode VecDeque to mp4 using FFMPEG or similar
     }

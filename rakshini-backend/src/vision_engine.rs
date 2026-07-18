@@ -4,8 +4,8 @@ use tokio::sync::Mutex;
 use std::path::Path;
 use std::fs::File;
 use std::io::Write;
-use ort::session::Session;
-use ort::value::Value;
+use ort::session::{builder::GraphOptimizationLevel, Session};
+use ort::value::TensorRef;
 use ndarray::Array;
 use image::{imageops::FilterType, GenericImageView};
 
@@ -34,19 +34,13 @@ impl VisionEngine {
             }
         }
 
-        // Initialize ORT Session
-        let session = match (|| {
-            let session = Session::builder()?
-                .with_intra_threads(4)?
-                .commit_from_file(model_path)?;
-            Ok::<_, ort::Error>(session)
-        })() {
-            Ok(sess) => Some(sess),
-            Err(e) => {
-                println!("Failed to load ONNX model: {}", e);
-                None
-            }
-        };
+        // Initialize ORT Session (ort 2.0 API)
+        let session = Session::builder()
+            .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
+            .and_then(|b| b.with_intra_threads(4))
+            .and_then(|b| b.commit_from_file(model_path))
+            .map_err(|e| println!("Failed to load ONNX model: {}", e))
+            .ok();
 
         Self {
             session: Arc::new(Mutex::new(session)),
@@ -78,10 +72,10 @@ impl VisionEngine {
         }
 
         let mut session_lock = self.session.lock().await;
-        if let Some(session) = &mut *session_lock {
-            // 3. Inference
-            if let Ok(input_val) = Value::from_array(input_tensor) {
-                if let Ok(outputs) = session.run(ort::inputs![input_val]) {
+        if let Some(session) = session_lock.as_mut() {
+            // 3. Inference (ort 2.0 API)
+            if let Ok(input_value) = TensorRef::from_array_view(&input_tensor) {
+                if let Ok(outputs) = session.run(ort::inputs![input_value]) {
                     // 4. Post-process
                     if let Ok(view) = outputs[0].try_extract_array::<f32>() {
                         // YOLOv8 output shape is [1, 84, 8400]
@@ -110,9 +104,15 @@ impl VisionEngine {
                                     let x1 = (cx - w / 2.0) * scale_x;
                                     let y1 = (cy - h / 2.0) * scale_y;
                                     
-                                    let label = if class_id == 0 { "Person" } else if class_id == 2 { "Vehicle" } else { "Object" };
-                                    
-                                    // For now, if someone brings a "Weapon" (e.g. knife = 43, baseball bat = 34), trigger violence
+                                    // COCO class ids: 0 = person, 1/2/3/5/7 = vehicles, 34 = baseball bat, 43 = knife
+                                    let label = match class_id {
+                                        0 => "Person",
+                                        1 | 2 | 3 | 5 | 7 => "Vehicle",
+                                        34 | 43 => "Weapon",
+                                        _ => "Object",
+                                    };
+
+                                    // If a weapon-class object appears (knife = 43, baseball bat = 34), raise an event
                                     if class_id == 43 || class_id == 34 {
                                         event = Some(VisionEvent {
                                             description: format!("Weapon detected: {}", label),
@@ -125,23 +125,73 @@ impl VisionEngine {
                                         label: label.to_string(),
                                         confidence: max_prob,
                                         bounding_box: BoundingBox {
-                                            x: x1 as u32,
-                                            y: y1 as u32,
-                                            width: (w * scale_x) as u32,
-                                            height: (h * scale_y) as u32,
+                                            x: x1 as i32,
+                                            y: y1 as i32,
+                                            width: (w * scale_x) as i32,
+                                            height: (h * scale_y) as i32,
                                         },
                                     });
                                 }
                             }
                             
-                            // (A real implementation would apply Non-Maximum Suppression (NMS) here to deduplicate boxes)
                         }
                     }
                 }
             }
         }
-        
+
+        // 5. Non-Maximum Suppression to deduplicate overlapping boxes (IoU > 0.45)
+        let detections = non_max_suppression(detections, 0.45);
+
         (detections, event)
+    }
+}
+
+/// Greedy NMS: keep highest-confidence boxes, drop lower-confidence ones that
+/// overlap an already-kept box of the same label beyond `iou_threshold`.
+fn non_max_suppression(mut dets: Vec<Detection>, iou_threshold: f32) -> Vec<Detection> {
+    dets.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut kept: Vec<Detection> = Vec::new();
+    for cand in dets {
+        let overlaps = kept.iter().any(|k| {
+            k.label == cand.label && iou(&k.bounding_box, &cand.bounding_box) > iou_threshold
+        });
+        if !overlaps {
+            kept.push(cand);
+        }
+    }
+    kept
+}
+
+/// Intersection-over-Union for two axis-aligned boxes.
+fn iou(a: &BoundingBox, b: &BoundingBox) -> f32 {
+    let ax2 = a.x + a.width;
+    let ay2 = a.y + a.height;
+    let bx2 = b.x + b.width;
+    let by2 = b.y + b.height;
+
+    let ix1 = a.x.max(b.x);
+    let iy1 = a.y.max(b.y);
+    let ix2 = ax2.min(bx2);
+    let iy2 = ay2.min(by2);
+
+    let iw = (ix2 - ix1).max(0);
+    let ih = (iy2 - iy1).max(0);
+    let inter = (iw * ih) as f32;
+
+    let area_a = (a.width * a.height).max(0) as f32;
+    let area_b = (b.width * b.height).max(0) as f32;
+    let union = area_a + area_b - inter;
+
+    if union <= 0.0 {
+        0.0
+    } else {
+        inter / union
     }
 }
 

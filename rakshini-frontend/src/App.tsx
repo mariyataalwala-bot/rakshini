@@ -25,13 +25,16 @@ function App() {
   
   const telemetry = cameraTelemetry || { latency: 0, fps: 0, cpu: 0, gpu: 0, memory: 0 };
   
-  const incidentsCount = useStore(state => state.incidents.length);
-  
-  const activeCamerasCount = useStore(state => {
-    const list = Object.values(state.cameras);
-    if (list.length === 0) return 3;
-    return list.filter(c => c.status === 'online').length;
+  const activeDetectionsCount = useStore(state => {
+    return state.detections[activeCameraId]?.length || 0;
   });
+
+  const heliosApiKey = useStore(state => state.heliosApiKey);
+  const windyApiKey = useStore(state => state.windyApiKey);
+  const fiveOneOneNyApiKey = useStore(state => state.fiveOneOneNyApiKey);
+  const roboflowApiKey = useStore(state => state.roboflowApiKey);
+  const roboflowModelEndpoint = useStore(state => state.roboflowModelEndpoint);
+  const visionEngineMode = useStore(state => state.visionEngineMode);
 
   const getCameraVideoSrc = (id: string) => {
     switch(id) {
@@ -142,13 +145,15 @@ function App() {
                     <div className="text-xs text-slate-400 font-medium mb-2 uppercase tracking-wider">FPS</div>
                     <div className="text-2xl font-light tracking-tight text-white group-hover:text-blue-400 transition-colors drop-shadow-sm">{telemetry.fps}</div>
                   </div>
-                  <div className="stat-item group p-5 bg-slate-800/30 rounded-xl border border-white/5 hover:border-blue-500/30 hover:bg-slate-800/50 transition-all duration-300 hover:-translate-y-1 shadow-lg">
-                    <div className="text-xs text-slate-400 font-medium mb-2 uppercase tracking-wider">Active Cameras</div>
-                    <div className="text-2xl font-light tracking-tight text-white group-hover:text-blue-400 transition-colors drop-shadow-sm">{activeCamerasCount}</div>
-                  </div>
                   <div className="stat-item group p-5 bg-slate-800/30 rounded-xl border border-white/5 hover:border-rose-500/30 hover:bg-slate-800/50 transition-all duration-300 hover:-translate-y-1 shadow-lg">
-                    <div className="text-xs text-slate-400 font-medium mb-2 uppercase tracking-wider">Incidents Today</div>
-                    <div className={`text-2xl font-light tracking-tight transition-colors drop-shadow-sm ${incidentsCount > 0 ? 'text-rose-500 font-normal animate-pulse-fast' : 'text-white'}`}>{incidentsCount}</div>
+                    <div className="text-xs text-slate-400 font-medium mb-2 uppercase tracking-wider">Active Detections</div>
+                    <div className={`text-2xl font-light tracking-tight transition-colors drop-shadow-sm ${activeDetectionsCount > 0 ? 'text-rose-500' : 'text-white'}`}>{activeDetectionsCount}</div>
+                  </div>
+                  <div className="stat-item group p-5 bg-slate-800/30 rounded-xl border border-white/5 hover:border-emerald-500/30 hover:bg-slate-800/50 transition-all duration-300 hover:-translate-y-1 shadow-lg">
+                    <div className="text-xs text-slate-400 font-medium mb-2 uppercase tracking-wider">Status</div>
+                    <div className={`text-xl font-light tracking-tight drop-shadow-sm ${wsConnected ? 'text-emerald-400' : 'text-rose-500'}`}>
+                      {wsConnected ? 'ONLINE' : 'OFFLINE'}
+                    </div>
                   </div>
                 </div>
               </section>
@@ -210,7 +215,7 @@ function App() {
                       type="password" 
                       className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
                       placeholder="Enter Helios Developer Key to stream live cameras..."
-                      value={useStore.getState().heliosApiKey || ''}
+                      value={heliosApiKey || ''}
                       onChange={(e) => useStore.getState().setHeliosApiKey(e.target.value || null)}
                     />
                   </div>
@@ -220,7 +225,7 @@ function App() {
                       type="password" 
                       className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
                       placeholder="Enter Windy Webcams Key to fetch real-world streams..."
-                      value={useStore.getState().windyApiKey || ''}
+                      value={windyApiKey || ''}
                       onChange={(e) => useStore.getState().setWindyApiKey(e.target.value || null)}
                     />
                   </div>
@@ -230,30 +235,64 @@ function App() {
                       type="password" 
                       className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
                       placeholder="Enter 511NY Developer Key as alternative traffic API..."
-                      value={useStore.getState().fiveOneOneNyApiKey || ''}
+                      value={fiveOneOneNyApiKey || ''}
                       onChange={(e) => useStore.getState().setFiveOneOneNyApiKey(e.target.value || null)}
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Roboflow Private API Key</label>
-                    <input 
-                      type="password" 
-                      className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-purple-500 transition-colors"
-                      placeholder="Enter Roboflow Private API Key (rf_...)"
-                      value={useStore((state) => state.roboflowApiKey) || ''}
-                      onChange={(e) => useStore.getState().setRoboflowApiKey(e.target.value || null)}
-                    />
+
+                  {/* Roboflow Settings Section */}
+                  <div className="border-t border-white/5 pt-4 mt-2">
+                    <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">AI Inference Engine Mode</label>
+                    <div className="flex gap-4">
+                      <button
+                        type="button"
+                        onClick={() => useStore.getState().setVisionEngineMode('local')}
+                        className={`flex-1 py-2 px-4 rounded-lg text-xs font-mono border transition-all duration-300 ${
+                          visionEngineMode === 'local'
+                            ? 'bg-blue-600/20 text-blue-400 border-blue-500/40 shadow-[0_0_10px_rgba(59,130,246,0.15)]'
+                            : 'bg-slate-900 text-slate-400 border-white/5 hover:bg-slate-850'
+                        }`}
+                      >
+                        LOCAL YOLOv8 (WASM)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => useStore.getState().setVisionEngineMode('roboflow')}
+                        className={`flex-1 py-2 px-4 rounded-lg text-xs font-mono border transition-all duration-300 ${
+                          visionEngineMode === 'roboflow'
+                            ? 'bg-blue-600/20 text-blue-400 border-blue-500/40 shadow-[0_0_10px_rgba(59,130,246,0.15)]'
+                            : 'bg-slate-900 text-slate-400 border-white/5 hover:bg-slate-850'
+                        }`}
+                      >
+                        ROBOFLOW HOSTED (Universe API)
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Roboflow Model ID / Version</label>
-                    <input 
-                      type="text" 
-                      className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-purple-500 transition-colors"
-                      placeholder="Enter Model ID (e.g. wpns/weapons-s4k8n/1)"
-                      value={useStore((state) => state.roboflowModelUrl) || ''}
-                      onChange={(e) => useStore.getState().setRoboflowModelUrl(e.target.value)}
-                    />
-                  </div>
+
+                  {visionEngineMode === 'roboflow' && (
+                    <div className="flex flex-col gap-4 border-t border-white/5 pt-4 mt-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Roboflow Private API Key</label>
+                        <input 
+                          type="password" 
+                          className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                          placeholder="Enter your Roboflow Private API Key (rf_...)"
+                          value={roboflowApiKey || ''}
+                          onChange={(e) => useStore.getState().setRoboflowApiKey(e.target.value || null)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Roboflow Model Endpoint</label>
+                        <input 
+                          type="text" 
+                          className="w-full bg-slate-900 border border-white/5 rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                          placeholder="Enter Model ID and Version (e.g. pistol-detection-xyz/3)"
+                          value={roboflowModelEndpoint || ''}
+                          onChange={(e) => useStore.getState().setRoboflowModelEndpoint(e.target.value || null)}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </section>
 

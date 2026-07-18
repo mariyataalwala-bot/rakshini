@@ -42,6 +42,7 @@ pub struct Camera {
 }
 
 // --- COMMON PROVIDER INTERFACE ---
+#[allow(dead_code)] // interface methods kept for provider parity; not all are wired to routes yet
 pub trait CameraProvider: Send + Sync {
     fn provider_name(&self) -> &'static str;
     async fn search_cameras(&self, bbox: &str) -> Result<Vec<Camera>, String>;
@@ -379,7 +380,13 @@ impl StreamManager {
 
         let tx = self.frame_tx.clone();
         let cam_id = camera.id.clone();
+        let worker_key = camera.id.clone();
         
+        // Fallback snapshot source for local-loop cameras. Overridable via env so the
+        // pipeline can be pointed at a local image/server for demos and tests.
+        let demo_snapshot = std::env::var("DEMO_SNAPSHOT_URL")
+            .unwrap_or_else(|_| "http://207.251.86.238/cctv452.jpg".to_string());
+
         let handle = tokio::spawn(async move {
             println!("Stream worker started for camera: {}", cam_id);
             let client = Client::new();
@@ -388,51 +395,34 @@ impl StreamManager {
             loop {
                 // If it is a local mock loop file or standard HTTP snapshot stream
                 let frame_source = if camera.snapshot_url.is_empty() {
-                    "http://207.251.86.238/cctv452.jpg"
+                    demo_snapshot.as_str()
+                } else if camera.snapshot_url.starts_with('/') {
+                    // Re-route local videos to the configured snapshot source for simulation
+                    demo_snapshot.as_str()
                 } else {
                     &camera.snapshot_url
                 };
 
-                let mut success = false;
-                if frame_source.starts_with("http") {
-                    // Fetch with a 2 second timeout to prevent blocking on offline endpoints
-                    match client.get(frame_source).timeout(Duration::from_secs(2)).send().await {
-                        Ok(resp) => {
-                            if let Ok(bytes) = resp.bytes().await {
-                                if tx.send(bytes.to_vec()).await.is_ok() {
-                                    success = true;
-                                }
+                match client.get(frame_source).send().await {
+                    Ok(resp) => {
+                        if let Ok(bytes) = resp.bytes().await {
+                            if tx.send(bytes.to_vec()).await.is_err() {
+                                break;
                             }
                         }
-                        Err(_) => {}
                     }
-                } else {
-                    // Try to read local file directly
-                    if let Ok(bytes) = std::fs::read(frame_source) {
-                        if tx.send(bytes).await.is_ok() {
-                            success = true;
-                        }
+                    Err(e) => {
+                        println!("Camera {} disconnected: {}. Retrying in 5s...", cam_id, e);
+                        sleep(Duration::from_secs(5)).await;
                     }
                 }
-
-                if !success {
-                    // Local fallback image!
-                    let fallback_path = "/Users/apple/Desktop/Rakshini/rakshini-frontend/public/cam3.jpg";
-                    if let Ok(bytes) = std::fs::read(fallback_path) {
-                        if tx.send(bytes).await.is_err() {
-                            break;
-                        }
-                    }
-                    // Wait a bit to prevent tight loop in case of failure
-                    sleep(Duration::from_millis(500)).await;
-                }
-
+                
                 // Configurable frame rate extraction (e.g. 10 FPS = 100ms delays)
                 sleep(Duration::from_millis(100)).await;
             }
         });
 
-        workers.insert(camera.id, handle);
+        workers.insert(worker_key, handle);
     }
 
     pub fn stop_stream(&self, id: &str) {
@@ -460,7 +450,7 @@ pub async fn start_capture_loop(tx: mpsc::Sender<Vec<u8>>) {
         country: "India".to_string(),
         city: "Bangalore".to_string(),
         stream_url: "/video.mp4".to_string(),
-        snapshot_url: "http://207.251.86.238/cctv452.jpg".to_string(),
+        snapshot_url: String::new(),
         is_live: true,
         supports_hls: false,
         supports_rtsp: false,

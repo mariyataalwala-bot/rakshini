@@ -1,10 +1,9 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import { Camera, AlertTriangle, Key } from 'lucide-react';
 import { BoundingBox } from '../../components/BoundingBox';
 import { useStore } from '../../store/useStore';
 import { useVisionEngine } from '../../hooks/useVisionEngine';
 import { useCameraFeed } from '../../hooks/useCameraFeed';
-import Hls from 'hls.js';
 
 interface LiveCameraProps {
   cameraId: string;
@@ -12,7 +11,7 @@ interface LiveCameraProps {
 }
 
 export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
-  const imgRef = useRef<HTMLVideoElement | HTMLImageElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [imgSize, setImgSize] = useState({ width: 640, height: 640 });
   
   // Attach local AI Fallback Engine
@@ -24,13 +23,21 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
   const setHeliosApiKey = useStore(state => state.setHeliosApiKey);
   const heliosIndex = cameraId === 'CAM-02' ? 0 : cameraId === 'CAM-03' ? 1 : 2;
   
-  const roboflowApiKey = useStore(state => state.roboflowApiKey);
-  const useRoboflowCloud = useStore(state => state.useRoboflowCloud);
-  const setUseRoboflowCloud = useStore(state => state.setUseRoboflowCloud);
-  
   // Unified Camera Feed hook using CameraProvider pattern
   const { streamUrl, activeCamera } = useCameraFeed(cameraId, isHelios ? heliosIndex : -1);
   const [tempKey, setTempKey] = useState('');
+
+  // Roboflow Configuration states
+  const visionEngineMode = useStore(state => state.visionEngineMode);
+  const roboflowApiKey = useStore(state => state.roboflowApiKey);
+  const roboflowModelEndpoint = useStore(state => state.roboflowModelEndpoint);
+  const setRoboflowApiKey = useStore(state => state.setRoboflowApiKey);
+  const setRoboflowModelEndpoint = useStore(state => state.setRoboflowModelEndpoint);
+
+  const [tempRoboflowKey, setTempRoboflowKey] = useState('');
+  const [tempModelEndpoint, setTempModelEndpoint] = useState('');
+
+  const needsRoboflowConfig = visionEngineMode === 'roboflow' && (!roboflowApiKey || !roboflowModelEndpoint);
 
   // Connect dynamically to the backend state for this specific camera
   const poses = useStore(state => state.poses[cameraId]) || [];
@@ -43,12 +50,6 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
   const activeIncidents = incidents.filter(inc => inc.cameraId === cameraId && inc.status === 'active');
   const hasThreat = activeIncidents.length > 0;
 
-  const src = streamUrl || '';
-  const isHlsStream = src.endsWith('.m3u8') || src.includes('index.m3u8');
-  const isIframe = !isHlsStream && (src.includes('windy.com') || src.includes('earthcam.com') || src.includes('earthlive.tv') || src.includes('embed') || src.includes('player') || src.includes('html') || src.includes('youtube.com') || src.includes('youtube-nocookie.com') || src.includes('8888') || src.includes('8889'));
-  // It is an image if we have a valid Helios image blob or standard image file extension
-  const isImage = !isIframe && (src.startsWith('blob:') || src.includes('.jpg') || src.includes('.png'));
-
   const handleImageLoad = () => {
     if (imgRef.current) {
       const el = imgRef.current as any;
@@ -59,147 +60,10 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
     }
   };
 
-  useEffect(() => {
-    let hls: Hls | null = null;
-    
-    if (isHlsStream && imgRef.current && imgRef.current instanceof HTMLVideoElement) {
-      const videoEl = imgRef.current;
-      
-      if (Hls.isSupported()) {
-        hls = new Hls({
-          maxMaxBufferLength: 10,
-          enableWorker: true
-        });
-        hls.loadSource(src);
-        hls.attachMedia(videoEl);
-        
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          videoEl.play().catch(e => console.log("Play failed:", e));
-        });
-        
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) {
-            switch(data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                console.log("Fatal network error encountered, try to recover...");
-                hls?.startLoad();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                console.log("Fatal media error encountered, try to recover...");
-                hls?.recoverMediaError();
-                break;
-              default:
-                console.log("Unrecoverable error, destroying Hls...");
-                hls?.destroy();
-                break;
-            }
-          }
-        });
-      } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-        videoEl.src = src;
-        videoEl.play().catch(e => console.log("Native play failed:", e));
-      }
-    }
-    
-    return () => {
-      if (hls) {
-        hls.destroy();
-      }
-    };
-  }, [src, isHlsStream]);
-
-  const getDetailedLabel = (det: any) => {
-    const baseLabel = det.label;
-    const trackId = det.track_id;
-    const box = det.bounding_box || det;
-    
-    let behavior = "";
-    
-    if (trackId) {
-      // 1. Check active interactions
-      const matchedInteraction = interactions.find(inter => inter.track_ids.includes(trackId));
-      if (matchedInteraction) {
-        behavior = matchedInteraction.label;
-      }
-      
-      // 2. Human Behavior from Pose Activity
-      if (baseLabel.toLowerCase() === 'person') {
-        const matchedPose = poses.find(p => p.track_id === trackId);
-        if (matchedPose) {
-          const validKps = matchedPose.keypoints.filter(k => k.confidence > 0.5);
-          if (validKps.length >= 4) {
-            const xs = validKps.map(k => k.x);
-            const ys = validKps.map(k => k.y);
-            const minX = Math.min(...xs);
-            const maxX = Math.max(...xs);
-            const minY = Math.min(...ys);
-            const maxY = Math.max(...ys);
-            const widthDiff = maxX - minX;
-            const heightDiff = maxY - minY;
-            
-            if (widthDiff > heightDiff * 1.5) {
-              behavior = behavior ? `${behavior} (Lying Down)` : "Lying Down";
-            } else if (heightDiff < (imgSize.height * 0.18)) {
-              behavior = behavior ? `${behavior} (Crouching)` : "Crouching";
-            } else {
-              behavior = behavior ? `${behavior} (Active)` : "Active";
-            }
-          } else {
-            behavior = behavior ? `${behavior} (Standing)` : "Standing";
-          }
-        } else {
-          behavior = behavior ? `${behavior} (Active)` : "Active";
-        }
-      }
-      
-      // 3. Vehicle Behavior
-      if (baseLabel.toLowerCase() === 'vehicle' || baseLabel.toLowerCase() === 'car') {
-        const matchedVehicle = vehicles.find(v => v.track_id === trackId);
-        if (matchedVehicle) {
-          const typeStr = matchedVehicle.type || baseLabel;
-          const plateStr = matchedVehicle.license_plate ? ` [${matchedVehicle.license_plate}]` : '';
-          const speedStr = matchedVehicle.is_parked 
-            ? 'Stationary (Parked)' 
-            : (matchedVehicle.speed ? `Moving at ${matchedVehicle.speed}mph` : 'Moving');
-          return `${typeStr} #${trackId}${plateStr}: ${speedStr}`;
-        }
-      }
-      
-      // 4. Animal Behavior
-      const matchedAnimal = animals.find(a => a.track_id === trackId);
-      if (matchedAnimal) {
-        const speciesStr = matchedAnimal.species || baseLabel;
-        return `${speciesStr} #${trackId}: Active / Moving`;
-      }
-    }
-    
-    // 5. Stationary Interacted Objects
-    const stationaryLabels = ['bag', 'backpack', 'suitcase', 'handbag', 'laptop', 'chair', 'cup', 'bottle', 'phone', 'cell phone'];
-    if (stationaryLabels.includes(baseLabel.toLowerCase())) {
-      const intersectingPerson = detections.find(other => {
-        if (other === det || other.label.toLowerCase() !== 'person') return false;
-        const otherBox = other;
-        return !(
-          box.x > otherBox.x + otherBox.width ||
-          box.x + box.width < otherBox.x ||
-          box.y > otherBox.y + otherBox.height ||
-          box.y + box.height < otherBox.y
-        );
-      });
-      
-      if (intersectingPerson) {
-        const personId = intersectingPerson.track_id ? ` #${intersectingPerson.track_id}` : '';
-        const action = baseLabel.toLowerCase() === 'laptop' ? 'In Use' : 'Carried / Interacted';
-        behavior = `${action} by Person${personId}`;
-      } else {
-        behavior = "Stationary (Unused)";
-      }
-    }
-    
-    const trackStr = trackId ? ` #${trackId}` : '';
-    const behaviorStr = behavior ? `: ${behavior}` : '';
-    return `${baseLabel}${trackStr}${behaviorStr}`;
-  };
+  const src = streamUrl || '';
+  const isIframe = src.includes('windy.com') || src.includes('embed') || src.includes('player') || src.includes('html') || src.includes('youtube.com') || src.includes('youtube-nocookie.com');
+  // It is an image if we have a valid Helios image blob or standard image file extension
+  const isImage = !isIframe && (src.startsWith('blob:') || src.includes('.jpg') || src.includes('.png'));
 
   return (
     <div className={`relative w-full h-full bg-black overflow-hidden group ${className}`}>
@@ -224,10 +88,10 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
         <video
           ref={imgRef as any}
           crossOrigin="anonymous"
-          src={isHlsStream ? undefined : src}
+          src={src}
           autoPlay
           muted
-          loop={!isHlsStream}
+          loop
           playsInline
           className="w-full h-full object-cover transition-all duration-700"
           onLoadedMetadata={handleImageLoad}
@@ -273,8 +137,9 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
 
           {/* Bounding Boxes */}
           {detections.map((det: any, idx) => {
+            // Handle both flat structure from local engine or nested structure from remote backend
             const box = det.bounding_box || det;
-            const labelStr = getDetailedLabel(det);
+            const labelStr = det.track_id ? `${det.label} #${det.track_id}` : det.label;
             
             return (
               <BoundingBox
@@ -334,6 +199,50 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
         </div>
       )}
 
+      {/* Roboflow Configuration Overlay */}
+      {needsRoboflowConfig && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl shadow-2xl max-w-sm w-full mx-4 animate-fadeIn">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg">
+                <Key size={20} />
+              </div>
+              <h3 className="text-white font-bold text-lg">Roboflow Model Setup</h3>
+            </div>
+            <p className="text-slate-400 text-sm mb-4">
+              Please enter your Roboflow Private API Key and Model ID to enable hosted detection.
+            </p>
+            <div className="flex flex-col gap-3 mb-4">
+              <input 
+                type="password" 
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                placeholder="Private API Key (rf_...)"
+                value={tempRoboflowKey}
+                onChange={(e) => setTempRoboflowKey(e.target.value)}
+              />
+              <input 
+                type="text" 
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                placeholder="Model Endpoint (e.g. pistol-detection-xyz/3)"
+                value={tempModelEndpoint}
+                onChange={(e) => setTempModelEndpoint(e.target.value)}
+              />
+            </div>
+            <button 
+              onClick={() => {
+                if (tempRoboflowKey && tempModelEndpoint) {
+                  setRoboflowApiKey(tempRoboflowKey);
+                  setRoboflowModelEndpoint(tempModelEndpoint);
+                }
+              }}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors"
+            >
+              Unlock Roboflow Inference
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Left OSD */}
       <div className="absolute top-4 left-4 z-30 flex flex-wrap gap-2 items-center bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 shadow-lg max-w-[80%]">
         <Camera size={14} className="text-white/70" />
@@ -351,16 +260,15 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
             Lock Cameras
           </button>
         )}
-        {roboflowApiKey && (
+        {visionEngineMode === 'roboflow' && roboflowApiKey && (
           <button 
-            onClick={() => setUseRoboflowCloud(!useRoboflowCloud)} 
-            className={`ml-2 px-2 py-0.5 border rounded text-[10px] font-mono transition-all duration-300 ${
-              useRoboflowCloud
-                ? 'bg-purple-600/30 hover:bg-purple-600/50 border-purple-500/40 text-purple-300 shadow-[0_0_10px_rgba(147,51,234,0.3)]'
-                : 'bg-black/60 hover:bg-white/5 border-white/5 text-slate-400'
-            }`}
+            onClick={() => {
+              setRoboflowApiKey(null);
+              setRoboflowModelEndpoint(null);
+            }} 
+            className="ml-2 px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/40 border border-rose-500/30 rounded text-[10px] text-rose-300 font-mono transition-colors"
           >
-            {useRoboflowCloud ? 'ROBOFLOW: ON' : 'ROBOFLOW: OFF'}
+            Reset Roboflow
           </button>
         )}
       </div>

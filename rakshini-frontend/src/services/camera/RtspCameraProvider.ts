@@ -12,7 +12,7 @@ export class RtspCameraProvider implements CameraProvider {
         longitude: 77.5946,
         country: 'India',
         city: 'Bangalore',
-        streamUrl: 'http://localhost:8888/cam1/',
+        streamUrl: 'rtsp://admin:admin@192.168.1.100:554/live',
         snapshotUrl: '/video.mp4', // local mock video loop fallback
         isLive: true,
         supportsHLS: false,

@@ -24,11 +24,41 @@ pub async fn ws_handler(
 
 async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<WsPayload>) {
     println!("New WebSocket connection established.");
-    while let Ok(payload) = rx.recv().await {
-        if let Ok(json) = serde_json::to_string(&payload) {
-            if socket.send(Message::Text(json)).await.is_err() {
-                println!("Client disconnected.");
-                break;
+    loop {
+        tokio::select! {
+            // Outgoing: broadcast payloads to this client
+            result = rx.recv() => {
+                match result {
+                    Ok(payload) => {
+                        if let Ok(json) = serde_json::to_string(&payload) {
+                            if socket.send(Message::Text(json)).await.is_err() {
+                                println!("Client disconnected.");
+                                break;
+                            }
+                        }
+                    }
+                    // Slow client fell behind the broadcast buffer: skip missed frames, keep the connection
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        println!("Client lagged, skipped {} frames.", skipped);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            // Incoming: answer heartbeat pings and detect disconnects
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) if text == "ping" => {
+                        if socket.send(Message::Text("pong".to_string())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        println!("Client disconnected.");
+                        break;
+                    }
+                    Some(Err(_)) => break,
+                    _ => {} // ignore other message types
+                }
             }
         }
     }

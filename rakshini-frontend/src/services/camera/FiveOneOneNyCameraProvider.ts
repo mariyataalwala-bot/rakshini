@@ -12,7 +12,7 @@ export class FiveOneOneNyCameraProvider implements CameraProvider {
     let apiKey = "";
     try {
       apiKey = this.getApiKey();
-    } catch (e) {
+    } catch {
       return this.getMockNyCameras();
     }
 

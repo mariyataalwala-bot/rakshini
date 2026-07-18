@@ -19,7 +19,7 @@ export class WindyCameraProvider implements CameraProvider {
     let apiKey = "";
     try {
       apiKey = this.getApiKey();
-    } catch (e) {
+    } catch {
       return this.getMockWindyCameras();
     }
 

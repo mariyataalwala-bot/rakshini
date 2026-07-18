@@ -72,10 +72,10 @@ interface AppState {
   // Roboflow API
   roboflowApiKey: string | null;
   setRoboflowApiKey: (key: string | null) => void;
-  roboflowModelUrl: string;
-  setRoboflowModelUrl: (url: string) => void;
-  useRoboflowCloud: boolean;
-  setUseRoboflowCloud: (val: boolean) => void;
+  roboflowModelEndpoint: string | null;
+  setRoboflowModelEndpoint: (endpoint: string | null) => void;
+  visionEngineMode: 'local' | 'roboflow';
+  setVisionEngineMode: (mode: 'local' | 'roboflow') => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -199,36 +199,17 @@ export const useStore = create<AppState>((set) => ({
   }),
 
   // Chat
-  chatMessages: [
-    {
-      id: 'init-1',
-      role: 'assistant',
-      content: 'System online. YOLO vision model running at 60FPS. Awaiting detections.',
-      timestamp: Date.now() - 600000
-    },
-    {
-      id: 'init-2',
-      role: 'assistant',
-      content: 'WARNING: YOLO detected an altercation on CAM-04. I am drafting a dispatch report for the authorities.',
-      timestamp: Date.now() - 300000
-    },
-    {
-      id: 'init-3',
-      role: 'assistant',
-      content: 'I am tracking one person at the Front Desk (CAM-01). No suspicious behavior detected.',
-      timestamp: Date.now() - 60000
-    }
-  ],
+  chatMessages: [],
   chatIsStreaming: false,
   addChatMessage: (msg) => set((state) => ({ chatMessages: [...state.chatMessages, msg] })),
   setChatStreaming: (isStreaming) => set({ chatIsStreaming: isStreaming }),
 
   // Helios
-  heliosApiKey: 'pYrfLoY1Z0Fdj68DEOoX8FkQWzQxh63G',
+  heliosApiKey: null,
   setHeliosApiKey: (key) => set({ heliosApiKey: key }),
 
   // Windy
-  windyApiKey: 'pYrfLoY1Z0Fdj68DEOoX8FkQWzQxh63G',
+  windyApiKey: null,
   setWindyApiKey: (key) => set({ windyApiKey: key }),
 
   // 511NY
@@ -238,8 +219,8 @@ export const useStore = create<AppState>((set) => ({
   // Roboflow
   roboflowApiKey: null,
   setRoboflowApiKey: (key) => set({ roboflowApiKey: key }),
-  roboflowModelUrl: 'weapons-s4k8n/1',
-  setRoboflowModelUrl: (url) => set({ roboflowModelUrl: url }),
-  useRoboflowCloud: false,
-  setUseRoboflowCloud: (val) => set({ useRoboflowCloud: val }),
+  roboflowModelEndpoint: null,
+  setRoboflowModelEndpoint: (endpoint) => set({ roboflowModelEndpoint: endpoint }),
+  visionEngineMode: 'local',
+  setVisionEngineMode: (mode) => set({ visionEngineMode: mode }),
 }));
