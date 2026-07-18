@@ -61,7 +61,7 @@ export function LiveCamera({ cameraId, className = '' }: LiveCameraProps) {
   };
 
   const src = streamUrl || '';
-  const isIframe = src.includes('windy.com') || src.includes('embed') || src.includes('player') || src.includes('html') || src.includes('youtube.com') || src.includes('youtube-nocookie.com');
+  const isIframe = src.includes('windy.com') || src.includes('earthcam.com') || src.includes('earthlive.tv') || src.includes('embed') || src.includes('player') || src.includes('html') || src.includes('youtube.com') || src.includes('youtube-nocookie.com');
   // It is an image if we have a valid Helios image blob or standard image file extension
   const isImage = !isIframe && (src.startsWith('blob:') || src.includes('.jpg') || src.includes('.png'));
 

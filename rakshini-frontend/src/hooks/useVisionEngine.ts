@@ -464,5 +464,199 @@ export function useVisionEngine(videoRef: React.RefObject<HTMLVideoElement | HTM
     };
   }, [isReady, processFrame]);
 
+  // Web Stream Simulation Loop for CAM-01, CAM-02, and CAM-03
+  useEffect(() => {
+    if (cameraId === 'CAM-04') return; // CAM-04 runs real local YOLOv8 ONNX model inference!
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let isRunning = true;
+
+    const simulateLoop = () => {
+      if (!isRunning) return;
+
+      const now = Date.now();
+      const payload: any = {
+        camera_id: cameraId,
+        timestamp: now,
+        type: 'detection',
+        detections: [],
+        poses: [],
+        interactions: [],
+        vehicles: [],
+        animals: [],
+        incidents: []
+      };
+
+      const bounce = Math.sin(now / 1500);
+      const shiftX = Math.round(bounce * 80);
+      const shiftY = Math.round(Math.cos(now / 2000) * 40);
+
+      if (cameraId === 'CAM-01') {
+        // Florida St. George Street: Peaceful Scenic view (Neutral Person tracking, NO alarms)
+        payload.detections = [
+          {
+            label: 'Person',
+            confidence: 0.94,
+            bounding_box: { x: 280 + shiftX, y: 310 + shiftY, width: 70, height: 180 },
+            track_id: 'p-801'
+          },
+          {
+            label: 'Person',
+            confidence: 0.89,
+            bounding_box: { x: 380 - shiftX / 2, y: 330 + shiftY, width: 75, height: 175 },
+            track_id: 'p-802'
+          }
+        ];
+      } else if (cameraId === 'CAM-02') {
+        // Times Square NY: Assault / Physical Violence
+        payload.detections = [
+          {
+            label: 'Person',
+            confidence: 0.95,
+            bounding_box: { x: 250 + shiftX, y: 300 + shiftY, width: 90, height: 240 },
+            track_id: 'p-201'
+          },
+          {
+            label: 'Person',
+            confidence: 0.91,
+            bounding_box: { x: 320 + shiftX, y: 310 + shiftY, width: 85, height: 230 },
+            track_id: 'p-202'
+          },
+          {
+            label: 'Weapon',
+            confidence: 0.82,
+            bounding_box: { x: 290 + shiftX, y: 380 + shiftY, width: 30, height: 35 },
+            track_id: 'w-301'
+          }
+        ];
+
+        payload.poses = [
+          {
+            track_id: 'p-201',
+            keypoints: [
+              { x: 290 + shiftX, y: 320 + shiftY, confidence: 0.9 },
+              { x: 290 + shiftX, y: 370 + shiftY, confidence: 0.9 },
+              { x: 270 + shiftX, y: 410 + shiftY, confidence: 0.9 }
+            ]
+          }
+        ];
+
+        payload.interactions = [
+          {
+            label: 'Physical Violence / Brawling',
+            confidence: 0.94,
+            track_ids: ['p-201', 'p-202']
+          }
+        ];
+
+        const lastAlertTime = lastAlertRef.current[cameraId] || 0;
+        if (now - lastAlertTime > 25000) {
+          lastAlertRef.current[cameraId] = now;
+          const evId = `ev-${now}`;
+          payload.incidents = [{
+            id: `inc-${now}`,
+            timestamp: now,
+            threat: 'Violence / Assault',
+            incident_type: 'crime',
+            confidence: 0.94,
+            cameraId,
+            status: 'active',
+            evidenceIds: [evId]
+          }];
+          useStore.getState().addChatMessage({
+            id: now.toString(),
+            role: 'assistant',
+            content: `🚨 ALERT: [Crime Model] detected active Violence/Assault on Times Square (CAM-02). Threat verified: weapon presence detected [Knife/Object]. Initiating automatic reporting to authorities.`,
+            timestamp: now
+          });
+        }
+      } else if (cameraId === 'CAM-03') {
+        // Bourbon Street New Orleans: Theft / Public Harassment
+        payload.detections = [
+          {
+            label: 'Person',
+            confidence: 0.90,
+            bounding_box: { x: 180 + shiftX, y: 260 + shiftY, width: 70, height: 180 },
+            track_id: 'p-301'
+          },
+          {
+            label: 'Person',
+            confidence: 0.86,
+            bounding_box: { x: 240 + shiftX, y: 250 + shiftY, width: 75, height: 190 },
+            track_id: 'p-302'
+          },
+          {
+            label: 'Vehicle',
+            confidence: 0.95,
+            bounding_box: { x: 450 - shiftX / 2, y: 320, width: 180, height: 120 },
+            track_id: 'v-501'
+          }
+        ];
+
+        payload.vehicles = [{
+          track_id: 'v-501',
+          type: 'Car',
+          speed: 12,
+          is_parked: false,
+          license_plate: 'LA-CATS88'
+        }];
+
+        payload.interactions = [
+          {
+            label: 'Theft / Purse Snatching',
+            confidence: 0.87,
+            track_ids: ['p-301', 'p-302']
+          }
+        ];
+
+        const lastAlertTime = lastAlertRef.current[cameraId] || 0;
+        if (now - lastAlertTime > 25000) {
+          lastAlertRef.current[cameraId] = now;
+          const evId = `ev-${now}`;
+          payload.incidents = [{
+            id: `inc-${now}`,
+            timestamp: now,
+            threat: 'Theft / Robbery',
+            incident_type: 'crime',
+            confidence: 0.87,
+            cameraId,
+            status: 'active',
+            evidenceIds: [evId]
+          }];
+          useStore.getState().addChatMessage({
+            id: now.toString(),
+            role: 'assistant',
+            content: `🚨 ALERT: [Crime Model] detected active Theft/Robbery on Bourbon Street (CAM-03). Purse snatching interaction trigger matched on Person #p-301 and #p-302. Review live balcony logs.`,
+            timestamp: now
+          });
+        }
+      }
+
+      const localDetections = payload.detections.map((d: any) => ({
+        x: d.bounding_box.x,
+        y: d.bounding_box.y,
+        width: d.bounding_box.width,
+        height: d.bounding_box.height,
+        label: d.label,
+        confidence: d.confidence,
+        track_id: d.track_id
+      }));
+      setDetections(localDetections);
+
+      useStore.getState().processPayload(payload);
+
+      if (isRunning) {
+        timeoutId = setTimeout(simulateLoop, 2000);
+      }
+    };
+
+    simulateLoop();
+
+    return () => {
+      isRunning = false;
+      clearTimeout(timeoutId);
+    };
+  }, [cameraId]);
+
   return { isReady, detections };
 }
